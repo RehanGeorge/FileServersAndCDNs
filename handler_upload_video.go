@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -118,5 +122,77 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	default:
 		respondWithError(w, http.StatusUnsupportedMediaType, "Unsupported video format", err)
 		return
+	}
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	// Prepare the ffprobe command
+	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
+
+	// Set the Stdout field to a pointer
+	var out bytes.Buffer
+	cmd.Stdout = &out
+
+	// Run the command
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("failed to run ffprobe: %w", err)
+	}
+
+	// Unmarshal the stdout of the command into a JSON struct
+	type FFProbeStream struct {
+		Width  int `json:"width"`
+		Height int `json:"height"`
+	}
+
+	type FFProbeResult struct {
+		Streams []FFProbeStream `json:"streams"`
+	}
+
+	var result FFProbeResult
+	err = json.Unmarshal(out.Bytes(), &result)
+	if err != nil {
+		return "", fmt.Errorf("failed to unmarshal ffprobe output: %w", err)
+	}
+
+	if len(result.Streams) == 0 {
+		return "", fmt.Errorf("no video streams found")
+	}
+
+	width := result.Streams[0].Width
+	height := result.Streams[0].Height
+	if width == 0 || height == 0 {
+		return "", fmt.Errorf("invalid video dimensions")
+	}
+
+	// Calculate the aspect ratio
+
+	// Use big.Rat for accurate ratio calculation to avoid floating point errors
+	ratio := big.NewRat(int64(width), int64(height))
+
+	// Define target ratios
+	sixteenNine := big.NewRat(16, 9)
+	nineSixteen := big.NewRat(9, 16)
+
+	// Compare the calculated ratio to the targets
+	if ratio.Cmp(sixteenNine) == 0 {
+		return "16:9", nil
+	} else if ratio.Cmp(nineSixteen) == 0 {
+		return "9:16", nil
+	} else {
+		// If neither standard ratio matches, check for near-ratios common in video (e.g., 1920x1080)
+		// We'll calculate the difference to see if it's "close enough" (for common dimensions like 1920x1080 vs 1.7777)
+		// 16/9 is ~1.777
+		if float64(width)/float64(height) > 1.7 && float64(width)/float64(height) < 1.78 {
+			return "16:9", nil
+		}
+
+		// 9/16 is ~0.5625
+		if float64(width)/float64(height) < 0.6 && float64(width)/float64(height) > 0.5 {
+			return "9:16", nil
+		}
+
+		// If neither standard ratio is matched closely, return "other"
+		return "other", nil
 	}
 }
