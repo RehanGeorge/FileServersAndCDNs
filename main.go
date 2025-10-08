@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -25,6 +26,26 @@ type apiConfig struct {
 	s3CfDistribution string
 	port             string
 	s3Client         *s3.Client
+}
+
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+	// Split the video URL to get the S3 key
+	if video.VideoURL == nil || !strings.HasPrefix(*video.VideoURL, cfg.s3Bucket+",") {
+		// No video URL or not an S3 URL, return as is
+		return video, nil
+	}
+	s3Details := strings.Split(*video.VideoURL, ",")
+	s3Bucket := s3Details[0]
+	s3Key := s3Details[1]
+
+	// Generate a presigned URL for the video
+	signedURL, err := generatePresignedURL(cfg.s3Client, s3Bucket, s3Key, 15*60*1e9) // 15 minutes
+	if err != nil {
+		return database.Video{}, err
+	}
+
+	video.VideoURL = &signedURL
+	return video, nil
 }
 
 func main() {
