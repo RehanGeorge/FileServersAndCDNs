@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -13,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -140,7 +138,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		}
 
 		// Update the video URL in the database
-		videoURL := fmt.Sprintf("%s,%s", cfg.s3Bucket, s3KeyString)
+		videoURL := fmt.Sprintf("%s/%s", cfg.s3CfDistribution, s3KeyString)
 
 		video.VideoURL = &videoURL
 		err = cfg.db.UpdateVideo(video)
@@ -151,14 +149,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 		fmt.Printf("Uploaded video to S3 at location %s\n", videoURL)
 
-		// Use dbVideoToSignedVideo to get the signed URL for response
-		signedVideo, err := cfg.dbVideoToSignedVideo(video)
-		if err != nil {
-			respondWithError(w, http.StatusInternalServerError, "Couldn't generate signed URL", err)
-			return
-		}
-
-		respondWithJSON(w, http.StatusOK, map[string]string{"videoURL": *signedVideo.VideoURL})
+		respondWithJSON(w, http.StatusOK, map[string]string{"videoURL": videoURL})
 		return
 	default:
 		respondWithError(w, http.StatusUnsupportedMediaType, "Unsupported video format", err)
@@ -248,19 +239,4 @@ func processVideoForFastStart(filePath string) (string, error) {
 	}
 
 	return outputPath, nil
-}
-
-func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
-	// Presign the GetObject request
-	presignClient := s3.NewPresignClient(s3Client)
-	req, err := presignClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
-		Bucket: &bucket,
-		Key:    &key,
-	}, s3.WithPresignExpires(expireTime))
-
-	if err != nil {
-		return "", fmt.Errorf("failed to presign S3 GetObject request: %w", err)
-	}
-
-	return req.URL, nil
 }
